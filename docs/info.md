@@ -8,13 +8,13 @@ You can also include images in this folder and reference them in the markdown. E
 -->
 
 ## How it works
-
+It just works
 
 
 ## How to test
-
+Just do it. 
 
 
 ## External hardware
-
+None.
 
