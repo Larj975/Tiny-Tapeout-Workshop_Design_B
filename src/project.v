@@ -4,7 +4,7 @@
  */
 `default_nettype none
 
-module tt_um_lif_dual (
+module tt_um_wokwi_434917577229968385 (
     input  wire [7:0] ui_in,    // Dedicated inputs
     output wire [7:0] uo_out,   // Dedicated outputs
     input  wire [7:0] uio_in,   // IOs: Input path
@@ -69,3 +69,4 @@ module tt_um_lif_dual (
     wire _unused = &{uio_in[7:1], 1'b0};
 
 endmodule
+
