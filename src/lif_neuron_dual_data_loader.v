@@ -1,111 +1,172 @@
-/*
-This file provides the mapping from the Wokwi modules to Verilog HDL.
+`timescale 1ns / 1ps
 
-It's only needed for Wokwi designs.
-*/
-
-`define default_netname none
-
-(* keep_hierarchy *)
-module buffer_cell (
-    input wire in,
-    output wire out
-    );
-    assign out = in;
-endmodule
-
-(* keep_hierarchy *)
-module and_cell (
-    input wire a,
-    input wire b,
-    output wire out
-    );
-
-    assign out = a & b;
-endmodule
-
-(* keep_hierarchy *)
-module or_cell (
-    input wire a,
-    input wire b,
-    output wire out
-    );
-
-    assign out = a | b;
-endmodule
-
-(* keep_hierarchy *)
-module xor_cell (
-    input wire a,
-    input wire b,
-    output wire out
-    );
-
-    assign out = a ^ b;
-endmodule
-
-(* keep_hierarchy *)
-module nand_cell (
-    input wire a,
-    input wire b,
-    output wire out
-    );
-
-    assign out = !(a&b);
-endmodule
-
-(* keep_hierarchy *)
-module not_cell (
-    input wire in,
-    output wire out
-    );
-
-    assign out = !in;
-endmodule
-
-(* keep_hierarchy *)
-module mux_cell (
-    input wire a,
-    input wire b,
-    input wire sel,
-    output wire out
-    );
-
-    assign out = sel ? b : a;
-endmodule
-
-(* keep_hierarchy *)
-module dff_cell (
+module lif_neuron_dual_data_loader (
+    // System signals
     input wire clk,
-    input wire d,
-    output reg q,
-    output wire notq
-    );
+    input wire reset,
+    input wire enable,
+    
+    // Serial data input
+    input wire serial_data_in,
+    input wire load_enable,
+    
+    // Outputs to LIF neuron
+    output reg [2:0] weight_a,         // w_a parameter
+    output reg [2:0] weight_b,         // w_b parameter  
+    output reg [7:0] leak_rate,        // single leak rate (8-bit precision)
+    output reg [7:0] threshold,        // fixed threshold (non-adaptive)
+    output reg [3:0] leak_cycles,      // cycles for leak operation
+    output reg params_ready            // Parameters loaded and ready
+);
 
-    assign notq = !q;
-    always @(posedge clk)
-        q <= d;
+// State machine for parameter loading
+parameter IDLE = 3'b000;
+parameter LOAD_WA = 3'b001;
+parameter LOAD_WB = 3'b010;
+parameter LOAD_LEAK_RATE = 3'b011;
+parameter LOAD_THRESHOLD = 3'b100;
+parameter LOAD_LEAK_CYCLES = 3'b101;
+parameter READY = 3'b110;
 
-endmodule
+// Internal registers
+reg [7:0] shift_reg;
+reg [2:0] bit_count;
+reg [2:0] current_state;
+reg [2:0] next_state;
 
-(* keep_hierarchy *)
-module dffsr_cell (
-    input wire clk,
-    input wire d,
-    input wire s,
-    input wire r,
-    output reg q,
-    output wire notq
-    );
+// Default parameter values
+parameter DEFAULT_WA = 3'd2;               // Default weight A
+parameter DEFAULT_WB = 3'd2;               // Default weight B
+parameter DEFAULT_LEAK_RATE = 8'd2;        // Default leak rate
+parameter DEFAULT_THRESHOLD = 8'd30;       // Default fixed threshold
+parameter DEFAULT_LEAK_CYCLES = 4'd2;      // Default leak cycles
 
-    assign notq = !q;
+// Sequential state transitions
+always @(*) begin
+    case (current_state)
+        LOAD_WA: next_state = LOAD_WB;
+        LOAD_WB: next_state = LOAD_LEAK_RATE;
+        LOAD_LEAK_RATE: next_state = LOAD_THRESHOLD;
+        LOAD_THRESHOLD: next_state = LOAD_LEAK_CYCLES;
+        LOAD_LEAK_CYCLES: next_state = READY;
+        default: next_state = IDLE;
+    endcase
+end
 
-    always @(posedge clk or posedge s or posedge r) begin
-        if (r)
-            q <= 0;
-        else if (s)
-            q <= 1;
-        else
-            q <= d;
+// State machine and serial loading logic
+always @(posedge clk) begin
+    if (reset) begin
+        current_state <= IDLE;
+        shift_reg <= 8'd0;
+        bit_count <= 3'd0;
+        weight_a <= DEFAULT_WA;
+        weight_b <= DEFAULT_WB;
+        leak_rate <= DEFAULT_LEAK_RATE;
+        threshold <= DEFAULT_THRESHOLD;
+        leak_cycles <= DEFAULT_LEAK_CYCLES;
+        params_ready <= 1'b1;
+    end else if (enable) begin
+        case (current_state)
+            IDLE: begin
+                if (load_enable) begin
+                    current_state <= LOAD_WA;
+                    bit_count <= 3'd0;
+                    shift_reg <= 8'd0;
+                    params_ready <= 1'b0;
+                end
+            end
+            
+            LOAD_WA: begin
+                if (load_enable) begin
+                    shift_reg <= {shift_reg[6:0], serial_data_in};
+                    bit_count <= bit_count + 1;
+                    if (bit_count == 3'd7) begin
+                        weight_a <= {shift_reg[1:0], serial_data_in};
+                        current_state <= next_state;
+                        bit_count <= 3'd0;
+                        shift_reg <= 8'd0;
+                    end
+                end else begin
+                    current_state <= IDLE;
+                    params_ready <= 1'b1;
+                end
+            end
+            
+            LOAD_WB: begin
+                if (load_enable) begin
+                    shift_reg <= {shift_reg[6:0], serial_data_in};
+                    bit_count <= bit_count + 1;
+                    if (bit_count == 3'd7) begin
+                        weight_b <= {shift_reg[1:0], serial_data_in};
+                        current_state <= next_state;
+                        bit_count <= 3'd0;
+                        shift_reg <= 8'd0;
+                    end
+                end else begin
+                    current_state <= IDLE;
+                    params_ready <= 1'b1;
+                end
+            end
+            
+            LOAD_LEAK_RATE: begin
+                if (load_enable) begin
+                    shift_reg <= {shift_reg[6:0], serial_data_in};
+                    bit_count <= bit_count + 1;
+                    if (bit_count == 3'd7) begin
+                        leak_rate <= {shift_reg[6:0], serial_data_in};
+                        current_state <= next_state;
+                        bit_count <= 3'd0;
+                        shift_reg <= 8'd0;
+                    end
+                end else begin
+                    current_state <= IDLE;
+                    params_ready <= 1'b1;
+                end
+            end
+            
+            LOAD_THRESHOLD: begin
+                if (load_enable) begin
+                    shift_reg <= {shift_reg[6:0], serial_data_in};
+                    bit_count <= bit_count + 1;
+                    if (bit_count == 3'd7) begin
+                        threshold <= {shift_reg[6:0], serial_data_in};
+                        current_state <= next_state;
+                        bit_count <= 3'd0;
+                        shift_reg <= 8'd0;
+                    end
+                end else begin
+                    current_state <= IDLE;
+                    params_ready <= 1'b1;
+                end
+            end
+            
+            LOAD_LEAK_CYCLES: begin
+                if (load_enable) begin
+                    shift_reg <= {shift_reg[6:0], serial_data_in};
+                    bit_count <= bit_count + 1;
+                    if (bit_count == 3'd7) begin
+                        leak_cycles <= {shift_reg[2:0], serial_data_in};
+                        current_state <= READY;
+                        params_ready <= 1'b1;
+                    end
+                end else begin
+                    current_state <= IDLE;
+                    params_ready <= 1'b1;
+                end
+            end
+            
+            READY: begin
+                if (!load_enable) begin
+                    current_state <= IDLE;
+                end
+            end
+            
+            default: begin
+                current_state <= IDLE;
+            end
+        endcase
     end
+end
+
 endmodule
+
